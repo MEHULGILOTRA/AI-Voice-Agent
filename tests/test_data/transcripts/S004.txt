@@ -1,0 +1,6 @@
+Agent: Hello, may I please speak with Robert Garcia?
+Robert Garcia: Yes, who is this?
+Agent: Hi Robert, I'm calling from the education centre to confirm details for your child's group sessions.
+Robert Garcia: I'm not interested and I'd prefer you don't call me again. Please remove me from your list.
+Agent: I completely understand, Robert. I've noted your preference and will ensure no further contact. Apologies for the interruption and have a good day.
+Robert Garcia: Thank you.

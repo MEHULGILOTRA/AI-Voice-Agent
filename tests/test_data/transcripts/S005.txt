@@ -1,0 +1,13 @@
+Agent: Hello, may I please speak with Amina Patel?
+Amina Patel: Yes, this is her.
+Agent: Hi Amina! I'm calling about your child's group sessions. Could I confirm your email?
+Amina Patel: Hmm, I think it's something at gmail, I can't remember exactly.
+Agent: No problem. What school does your child attend?
+Amina Patel: It's either Oakwood or Riverside, I'm not sure which one my husband registered them at.
+Agent: Okay. And what mobile number should we use?
+Amina Patel: This one is fine but sometimes I lose my phone. My husband's number might be better but I don't have it here.
+Agent: Of course. Is there a preferred day for sessions?
+Amina Patel: Any day really, doesn't matter.
+Agent: And a preferred time?
+Amina Patel: Morning or afternoon, I really don't mind.
+Agent: Thank you Amina. We may follow up to clarify a few details. Have a great day!

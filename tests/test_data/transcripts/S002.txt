@@ -1,0 +1,13 @@
+Agent: Hello, may I please speak with Marcus Williams?
+Marcus Williams: Speaking.
+Agent: Hi Marcus! I'm calling to confirm some details for your child's group session. Do you have a moment?
+Marcus Williams: I'm a bit busy right now actually.
+Agent: No problem at all — I'll be quick. Could I just confirm your email?
+Marcus Williams: It's marcus.w@example.com
+Agent: Thank you. And your mobile number?
+Marcus Williams: +1-555-0102, yes.
+Agent: What school does your child attend?
+Marcus Williams: I'd have to check — I'm not sure which one you mean. Can you call back Thursday?
+Agent: Of course! We'll try again Thursday. Any specific time that works?
+Marcus Williams: Afternoon is better.
+Agent: Noted. We'll call Thursday afternoon. Thanks Marcus!

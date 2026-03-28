@@ -1,0 +1,13 @@
+Agent: Hello, may I please speak with the parent?
+Parent: Yes, speaking.
+Agent: Hi! I'm calling to confirm some details for your child's group session. Could I get your email address?
+Parent: Sure, it's parent@example.com
+Agent: And your mobile number?
+Parent: +1-555-0000
+Agent: Which school does your child attend?
+Parent: Oakwood Elementary.
+Agent: What day works best for sessions?
+Parent: Tuesday.
+Agent: And what time?
+Parent: 10:00 AM.
+Agent: Thank you so much! Have a great day.

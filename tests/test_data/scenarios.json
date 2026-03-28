@@ -1,0 +1,52 @@
+[
+  {
+    "scenario_id": "S001",
+    "name": "Successful Full Capture",
+    "description": "Parent answers and provides all required fields in a single call.",
+    "parent_id": "P001",
+    "expected_status": "completed",
+    "expected_confidence_min": 0.9,
+    "call_outcome": "answered",
+    "triggers_interrupt": false
+  },
+  {
+    "scenario_id": "S002",
+    "name": "Partial Capture — Callback Requested",
+    "description": "Parent answers, gives email and mobile, but asks for a callback on Thursday.",
+    "parent_id": "P002",
+    "expected_status": "callback_requested",
+    "expected_confidence_min": 0.4,
+    "call_outcome": "answered",
+    "triggers_interrupt": false
+  },
+  {
+    "scenario_id": "S003",
+    "name": "No Answer — WhatsApp Fallback",
+    "description": "Call is not answered; a WhatsApp follow-up message is sent instead.",
+    "parent_id": "P003",
+    "expected_status": "unreachable",
+    "expected_confidence_min": 0.0,
+    "call_outcome": "no_answer",
+    "triggers_interrupt": false
+  },
+  {
+    "scenario_id": "S004",
+    "name": "Opt-Out Request",
+    "description": "Parent answers and immediately requests no further contact.",
+    "parent_id": "P004",
+    "expected_status": "opt_out",
+    "expected_confidence_min": 1.0,
+    "call_outcome": "answered",
+    "triggers_interrupt": false
+  },
+  {
+    "scenario_id": "S005",
+    "name": "Low Confidence — Human Review Required",
+    "description": "Parent answers but gives conflicting or incomplete information; confidence score falls below threshold.",
+    "parent_id": "P005",
+    "expected_status": "human_review",
+    "expected_confidence_min": 0.0,
+    "call_outcome": "answered",
+    "triggers_interrupt": true
+  }
+]

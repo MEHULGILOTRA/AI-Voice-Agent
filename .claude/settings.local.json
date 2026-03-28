@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(brew list:*)",
+      "Read(//usr/local/bin/**)",
+      "Read(//opt/homebrew/bin/**)",
+      "Bash(/opt/homebrew/bin/python3.11 -m venv .venv)",
+      "Bash(.venv/bin/python --version)",
+      "Bash(/opt/homebrew/bin/pip3.11 install:*)",
+      "Bash(.venv/bin/pip install:*)",
+      "Read(//Users/mehulgilotra/Library/Application Support/pypoetry/venv/bin/**)",
+      "Bash(curl -sSL https://install.python-poetry.org)",
+      "Bash(/opt/homebrew/bin/python3.11 -)",
+      "Bash(export PATH=\"$HOME/.local/bin:$PATH\")",
+      "Bash(poetry env:*)",
+      "Bash(poetry lock:*)",
+      "Bash(poetry install:*)",
+      "Bash(poetry run:*)"
+    ]
+  }
+}

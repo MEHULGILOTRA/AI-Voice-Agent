@@ -1,0 +1,17 @@
+Agent: Hello, may I please speak with Sarah Johnson?
+Sarah Johnson: Yes, this is Sarah speaking.
+Agent: Hi Sarah! I'm calling from the education centre to confirm a few details before we schedule your child's group session. Do you have a couple of minutes?
+Sarah Johnson: Sure, go ahead.
+Agent: Great! Could I confirm your email address?
+Sarah Johnson: Yes, it's sarah.johnson@example.com
+Agent: Perfect. And is +1-555-0101 still the best mobile number for you?
+Sarah Johnson: Yes, that's correct.
+Agent: Which school does your child attend?
+Sarah Johnson: Oakwood Elementary.
+Agent: Wonderful. What day of the week works best for group sessions?
+Sarah Johnson: Tuesday mornings would be ideal.
+Agent: And what time on Tuesdays?
+Sarah Johnson: Around 10:00 AM please.
+Agent: Any notes or special considerations we should know?
+Sarah Johnson: No, that's all. Thanks for calling!
+Agent: Thank you so much, Sarah. We'll be in touch with the session details. Have a great day!

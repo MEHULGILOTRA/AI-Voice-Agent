@@ -1,0 +1,304 @@
+================================================================================
+  AGENTIC AI BOT — ARCHITECTURE
+================================================================================
+
+This document explains how the system is structured, how data flows through it,
+and the reasoning behind every major design choice.
+
+────────────────────────────────────────────────────────────────────────────────
+  SYSTEM DIAGRAM
+────────────────────────────────────────────────────────────────────────────────
+
+  HTTP Request
+      │
+      ▼
+  ┌───────────────────────────────────────────────────────────────┐
+  │                  FastAPI  (monolith, app/main.py)             │
+  │                                                               │
+  │  /api/v1/outreach/*      /api/v1/telegram/*  /api/v1/review/* │
+  └───────────┬───────────────────────┬───────────────────────────┘
+              │                       │
+      ┌───────▼──────┐        ┌───────▼──────┐
+      │  OUTREACH     │        │  TELEGRAM    │
+      │  LangGraph    │        │  LangGraph   │
+      │               │        │              │
+      │  validate ──► │        │ load_context │
+      │  call      ──►│        │ check_pre    │
+      │  converse* ──►│        │ select_tmpl  │
+      │  extract   ──►│        │ render_msg   │
+      │  score     ──►│        │ validate_out │
+      │  write     ──►│        │ send_tg      │
+      │  audit        │        │ record       │
+      └───────┬───────┘        └──────┬───────┘
+              │                       │
+              └──────────┬────────────┘
+                         │
+              ┌──────────▼──────────┐
+              │    MemorySaver      │
+              │  (in-memory, shared │
+              │   by both graphs)   │
+              │                     │
+              │  thread_id =        │
+              │  "outreach:{uuid}"  │
+              │  "telegram:{uuid}"  │
+              └──────────┬──────────┘
+                         │
+         ┌───────────────▼───────────────────┐
+         │           Google Sheets            │
+         │  ┌──────────┬─────────┬─────────┐ │
+         │  │ Parents  │Students │ AuditLog│ │
+         │  ├──────────┼─────────┼─────────┤ │
+         │  │HumanReview (paused sessions)  │ │
+         │  └───────────────────────────────┘ │
+         └───────────────────────────────────┘
+
+  * = The ONLY LLM call in the entire system (outreach converse node).
+      Telegram agent has zero LLM calls.
+
+────────────────────────────────────────────────────────────────────────────────
+  LAYER BREAKDOWN
+────────────────────────────────────────────────────────────────────────────────
+
+  1. API LAYER  (app/api/v1/)
+  ─────────────────────────
+  FastAPI routers — thin. They:
+  - Validate the incoming request shape (Pydantic)
+  - Build the initial LangGraph state dict
+  - Call graph.invoke(state, config={"configurable": {"thread_id": ...}})
+  - Return the result as JSON
+
+  No business logic lives here. Each endpoint is ~10-15 lines.
+
+  Endpoints:
+    POST /api/v1/outreach/scenario/{id}/run   — demo mode, uses test data
+    POST /api/v1/outreach/start               — production entry point
+    POST /api/v1/telegram/send                — trigger student message
+    GET  /api/v1/review/pending               — operator review queue
+    POST /api/v1/review/{id}/resolve          — resume paused graph
+    GET  /api/v1/audit/logs                   — full audit trail
+    GET  /health + /health/ready              — liveness / readiness probes
+
+
+  2. AGENT LAYER  (app/agents/)
+  ──────────────────────────────
+  Each agent is a LangGraph StateGraph — a directed graph of pure functions.
+
+  OUTREACH GRAPH FLOW:
+    validate_request        Check opt-out / quiet hours / idempotency key.
+                            → If blocked: jump to finalize_audit.
+         │
+    initiate_call           Call VapiService.initiate_call().
+                            → If no answer: jump to send_whatsapp branch.
+         │
+    conduct_conversation    *** ONLY LLM NODE ***
+                            If transcript already in state (mock / fixture):
+                              skips the LLM call entirely.
+                            If no transcript: calls ChatOpenAI once to simulate
+                              the parent call. In production this is replaced
+                              by a real Vapi webhook handler.
+         │
+    extract_data            Parse transcript with compiled regex.
+                            Extracts: email, mobile, school, weekday, time.
+                            Detects: opt-out phrases, callback requests.
+                            No LLM.
+         │
+    score_confidence        Field-weight scoring (app/core/confidence.py).
+                            If score < CONFIDENCE_THRESHOLD:
+                              → interrupt() pauses graph here.
+                              → HumanReviewItem added to queue + Sheets.
+                              → Graph resumes when operator calls resolve API.
+         │
+    write_to_sheets         Upsert parent record. Idempotency key enforced.
+         │
+    finalize_audit          Append to AuditLog tab. Always runs.
+
+  NO-ANSWER BRANCH (after initiate_call):
+    send_whatsapp           Send pre-written template message via WhatsApp.
+         │
+    finalize_audit
+
+  TELEGRAM GRAPH FLOW (ZERO LLM CALLS):
+    load_student_context    Fetch full student record from Sheets (or fixture).
+                            All template variables come from here ONLY.
+                            Hallucination is structurally impossible.
+         │
+    check_preconditions     Opt-out / quiet hours / idempotency / chat_id check.
+         │
+    select_template         use_case string → template key lookup (plain dict).
+         │
+    render_message          String interpolation from student record.
+                            If required variable is missing → interrupt() fires.
+         │
+    validate_output         Check rendered message has no unfilled placeholders.
+         │
+    send_telegram           TelegramClient.send_message().
+         │
+    record_delivery         Write delivery status + idempotency key to Sheets.
+         │
+    finalize_audit
+
+
+  3. CORE LAYER  (app/core/)
+  ───────────────────────────
+  Pure Python, zero external deps, tested in isolation.
+
+  confidence.py     Field-weight scoring. Sum of weights for valid fields.
+                    Weights: email=0.25, mobile=0.25, school=0.20,
+                    weekday=0.15, time=0.15. Total possible = 1.0.
+
+  quiet_hours.py    Time-of-day check. Handles midnight-spanning windows.
+                    Uses pytz for timezone awareness.
+
+  opt_out.py        In-memory set of opted-out IDs. Warmed from Sheets at
+                    startup, updated in real time when opt-out is detected.
+
+  idempotency.py    SHA256(entity_id + action + date)[:16] key.
+                    Checked against Sheets before any write.
+                    Prevents double-processing if triggered twice in a day.
+
+  retry.py          @with_retry decorator via tenacity.
+                    Exponential backoff: waits 2^attempt seconds (cap 30s).
+                    Applied to all external calls (Sheets, Vapi, WA, Telegram).
+
+  memory.py         Single MemorySaver instance shared by both graphs.
+                    Thread IDs namespaced: "outreach:{uuid}" / "telegram:{uuid}"
+                    Background task prunes sessions older than SESSION_TTL.
+
+
+  4. SERVICE LAYER  (app/services/)
+  ───────────────────────────────────
+  All services have a MOCK_MODE flag (default: true).
+  When mock mode is on, no real API calls are made — the system runs
+  fully offline for development and testing.
+
+  sheets.py         Google Sheets client (gspread). Lazy connection:
+                    raises ConfigurationError on first access if URL not set,
+                    but the app starts and serves health checks regardless.
+                    Tab structure auto-created on first write.
+
+  vapi.py           Voice call. Mock returns a fixture transcript.
+                    Real mode calls Vapi REST API.
+
+  whatsapp.py       WhatsApp via Twilio. Mock logs the message.
+
+  telegram_client.py Telegram Bot API. Mock logs the message.
+
+  audit.py          Appends to in-memory buffer + Sheets AuditLog tab.
+                    Sheets write is best-effort (never raises).
+
+
+  5. DATA LAYER  (Google Sheets)
+  ───────────────────────────────
+  Four tabs, auto-created if missing:
+
+  Parents tab       One row per parent. Updated after each outreach attempt.
+  Students tab      One row per student. Updated after each message delivery.
+  AuditLog tab      Append-only. Every node transition logged here.
+  HumanReview tab   One row per interrupted session. Updated on resolution.
+
+  No SQL, no ORM, no migrations. Schema is the header row.
+  To add a field: add it to the header constant in sheets.py, and update
+  the relevant schema class.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  HUMAN-IN-THE-LOOP FLOW
+────────────────────────────────────────────────────────────────────────────────
+
+  The most architecturally interesting part of the system.
+
+  PAUSE:
+    1. A graph node calls langgraph.types.interrupt(context_snapshot).
+    2. LangGraph saves full state to MemorySaver (keyed by thread_id).
+    3. Graph execution stops. graph.invoke() does NOT return yet.
+    4. The node that called interrupt() adds a HumanReviewItem to:
+       - In-memory ReviewQueue (app/agents/shared/review_queue.py)
+       - Google Sheets HumanReview tab (best-effort)
+
+  OPERATOR REVIEWS:
+    GET /api/v1/review/pending
+    Returns all unresolved HumanReviewItem objects with:
+    - session_id    (which graph thread to resume)
+    - agent_type    (outreach or telegram)
+    - reason        (why it was flagged)
+    - context_snapshot (the full state at pause time)
+
+  RESUME:
+    POST /api/v1/review/{review_id}/resolve
+    Body: { "decision": "edit", "edited_data": { "captured_email": "..." } }
+
+    The API calls:
+      graph.invoke(Command(resume=edited_data),
+                   config={"configurable": {"thread_id": session_id}})
+
+    The graph resumes exactly where it paused, with the operator's
+    corrections applied. Execution continues to write_to_sheets → audit.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  RELIABILITY LAYER — WHERE EACH FEATURE LIVES
+────────────────────────────────────────────────────────────────────────────────
+
+  Feature               Mechanism                     File
+  ──────────────────────────────────────────────────────────────────────
+  Retry + backoff       @with_retry via tenacity       app/core/retry.py
+  Idempotency           SHA256 key → Sheets lookup     app/core/idempotency.py
+  Confidence threshold  Field-weight rules             app/core/confidence.py
+  Human review          LangGraph interrupt()          app/agents/shared/review_queue.py
+  Quiet hours           Time comparison (pytz)         app/core/quiet_hours.py
+  Opt-out suppression   In-memory set, Sheets source   app/core/opt_out.py
+  Audit logs            Append-only Sheets tab         app/services/audit.py
+  Channel fallback      Graph conditional edge         app/agents/outreach/graph.py
+  Session TTL           Background pruning task        app/core/memory.py
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LLM USAGE SUMMARY
+────────────────────────────────────────────────────────────────────────────────
+
+  Used:
+    - outreach/nodes.py → conduct_conversation: ONE call per session max.
+      In demo/mock mode (VAPI_MOCK_MODE=true), the transcript is loaded from
+      a fixture file and the LLM is NOT called at all.
+      In production, a real Vapi call replaces this node.
+
+  Not used (rule-based instead):
+    - Data extraction from transcript (regex)
+    - Confidence scoring (field-weight sum)
+    - Template selection (enum lookup)
+    - Message rendering (string interpolation)
+    - All routing, validation, and precondition checks
+    - Quiet hours, opt-out, idempotency
+
+  Cost impact:
+    Demo run (all 5 scenarios): 0 LLM calls (all mocked).
+    Production run (real Vapi): 1 LLM call per outreach where no live
+    transcript is available. Telegram: always 0 calls.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  ADAPTABILITY POINTS
+────────────────────────────────────────────────────────────────────────────────
+
+  To add a new Telegram use case:
+    → Edit app/agents/telegram/templates.py
+    → Add one entry to TEMPLATES dict and one to REQUIRED_VARS dict
+    → No other code changes needed
+
+  To change confidence threshold:
+    → Set CONFIDENCE_THRESHOLD=0.85 in .env
+
+  To use real APIs instead of mocks:
+    → Set VAPI_MOCK_MODE=false + VAPI_API_KEY=...
+    → Set TELEGRAM_MOCK_MODE=false + TELEGRAM_BOT_TOKEN=...
+    → Set WHATSAPP_MOCK_MODE=false + WHATSAPP_API_KEY=...
+
+  To point to a real Google Sheet:
+    → Set GOOGLE_SHEETS_URL=... + GOOGLE_SHEETS_CREDENTIALS_JSON=...
+    → App creates all 4 tabs automatically on first write
+
+  To swap the LLM:
+    → Set OPENAI_MODEL=gpt-4o in .env
+
+
+================================================================================
