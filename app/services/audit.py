@@ -7,6 +7,7 @@ Google Sheets AuditLog tab (best-effort, failures are logged but not raised).
 """
 import logging
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from typing import List, Optional, TYPE_CHECKING
 
@@ -17,8 +18,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+MAX_BUFFER_SIZE = 10_000
+
 # In-memory buffer (lost on restart, Sheets is the durable store)
-_audit_buffer: List[AuditLogEntry] = []
+_audit_buffer: deque = deque(maxlen=MAX_BUFFER_SIZE)
 
 
 class AuditService:

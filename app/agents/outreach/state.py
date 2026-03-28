@@ -10,6 +10,33 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
 
+def build_outreach_initial_state(parent_id: str, scenario_id: str, session_id: str) -> dict:
+    """Factory for the initial state dict used by both API endpoints and tests."""
+    return {
+        "session_id": session_id,
+        "parent_id": parent_id,
+        "scenario_id": scenario_id,
+        "messages": [],
+        "captured_email": None,
+        "captured_mobile": None,
+        "captured_school_name": None,
+        "captured_preferred_weekday": None,
+        "captured_preferred_time": None,
+        "captured_notes": None,
+        "outreach_status": None,
+        "confidence_score": 0.0,
+        "requires_human_review": False,
+        "human_review_reason": None,
+        "human_review_id": None,
+        "call_answered": False,
+        "whatsapp_sent": False,
+        "sheets_written": False,
+        "is_complete": False,
+        "error_message": None,
+        "audit_trail": [],
+    }
+
+
 class OutreachState(TypedDict):
     # ── Identity ──────────────────────────────────────────────────────────────
     session_id: str

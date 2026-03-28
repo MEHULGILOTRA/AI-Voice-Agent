@@ -3,6 +3,13 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel
 
 
+class DeliveryStatus(str, Enum):
+    PENDING = "pending"
+    SENT = "sent"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
 class MessageUseCase(str, Enum):
     HOMEWORK_FOLLOWUP = "homework_followup"
     MISSED_CLASS = "missed_class"

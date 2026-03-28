@@ -1,0 +1,391 @@
+================================================================================
+  AGENTIC AI BOT — DEMO WALKTHROUGH
+================================================================================
+
+This document is a step-by-step terminal guide. Every curl command can be
+copy-pasted as-is. All calls run in mock mode — no real API keys required.
+
+────────────────────────────────────────────────────────────────────────────────
+  SETUP (one-time)
+────────────────────────────────────────────────────────────────────────────────
+
+  # 1. Install dependencies
+  export PATH="$HOME/.local/bin:$PATH"
+  poetry install
+
+  # 2. Copy example environment file
+  cp .env.example .env
+  # No API keys required — the system is 100% rule-based (zero LLM calls).
+
+  # 3. Start the server
+  poetry run uvicorn app.main:app --reload
+
+  # 4. Verify it's up
+  curl http://localhost:8000/health
+  # → {"status":"healthy","version":"0.1.0","uptime_seconds":...}
+
+  curl http://localhost:8000/health/ready
+  # → {"status":"ready","sheets_available":false,"memory_sessions":0}
+  # sheets_available=false is expected when GOOGLE_SHEETS_URL is not set.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  OUTREACH SCENARIOS (5 scenarios, zero LLM calls)
+────────────────────────────────────────────────────────────────────────────────
+
+Each scenario maps to a pre-built test parent record and a fixture transcript.
+Run them with /api/v1/outreach/scenario/{id}/run.
+
+────────────────────────────────────────────────
+  S001 — Successful Full Capture
+────────────────────────────────────────────────
+
+  Parent: Sarah Johnson (P001)
+  What happens: Call answered. All 5 fields captured. Confidence = 1.0. Written
+                to Sheets (mocked). Session complete.
+
+  curl -s -X POST http://localhost:8000/api/v1/outreach/scenario/S001/run \
+    | python3 -m json.tool
+
+  Expected response:
+  {
+    "session_id": "...",
+    "parent_id": "P001",
+    "outreach_status": "completed",
+    "confidence_score": 1.0,
+    "captured_data": {
+      "captured_email": "sarah.johnson@example.com",
+      "captured_mobile": "+1-555-0101",
+      "captured_school": "Oakwood Elementary",
+      "captured_weekday": "Tuesday",
+      "captured_time": "10:00 AM"
+    },
+    "requires_human_review": false
+  }
+
+────────────────────────────────────────────────
+  S002 — Partial Capture + Callback Requested
+────────────────────────────────────────────────
+
+  Parent: Marcus Williams (P002)
+  What happens: Parent gives email + mobile, then asks to call back Thursday.
+                Callback flag set. Confidence ~0.50 (school/weekday/time missing).
+                Session ends as callback_requested.
+
+  curl -s -X POST http://localhost:8000/api/v1/outreach/scenario/S002/run \
+    | python3 -m json.tool
+
+  Expected:
+  {
+    "outreach_status": "callback_requested",
+    "confidence_score": 0.5,
+    "captured_data": {
+      "captured_email": "marcus.williams@example.com",
+      "captured_mobile": "+1-555-0202",
+      "captured_school": null,
+      "captured_weekday": null,
+      "captured_time": null
+    }
+  }
+
+────────────────────────────────────────────────
+  S003 — No Answer → WhatsApp Fallback
+────────────────────────────────────────────────
+
+  Parent: Emily Chen (P003)
+  What happens: Call is not answered. Graph takes the fallback edge to
+                send_whatsapp, which sends a pre-written template via WhatsApp
+                (mocked). No transcript available.
+
+  curl -s -X POST http://localhost:8000/api/v1/outreach/scenario/S003/run \
+    | python3 -m json.tool
+
+  Expected:
+  {
+    "outreach_status": "unreachable",
+    "confidence_score": 0.0,
+    "whatsapp_sent": true
+  }
+
+────────────────────────────────────────────────
+  S004 — Opt-Out Request
+────────────────────────────────────────────────
+
+  Parent: Robert Garcia (P004)
+  What happens: Parent says "Please stop calling, do not contact me again."
+                Opt-out flag extracted by regex. Parent added to opt-out cache.
+                Future calls for P004 will be blocked immediately at validate_request.
+
+  curl -s -X POST http://localhost:8000/api/v1/outreach/scenario/S004/run \
+    | python3 -m json.tool
+
+  Expected:
+  {
+    "outreach_status": "opt_out",
+    "confidence_score": 1.0,
+    "captured_data": { ... }
+  }
+
+  # Verify opt-out was registered — a second run should be blocked:
+  curl -s -X POST http://localhost:8000/api/v1/outreach/scenario/S004/run \
+    | python3 -m json.tool
+  # → outreach_status: "opt_out" (blocked at validate, never reaches conversation)
+
+────────────────────────────────────────────────
+  S005 — Low Confidence → Human Review Required
+────────────────────────────────────────────────
+
+  Parent: Jennifer Patel (P005)
+  What happens: Transcript is ambiguous — only 1-2 fields extracted. Score < 0.75.
+                Graph calls interrupt(). Session is PAUSED and added to review queue.
+
+  # Step 1: Trigger the scenario (it will block / pause)
+  curl -s -X POST http://localhost:8000/api/v1/outreach/scenario/S005/run \
+    | python3 -m json.tool
+
+  Expected:
+  {
+    "outreach_status": "human_review",
+    "requires_human_review": true,
+    "review_id": "rev_...",
+    "confidence_score": 0.25,
+    "captured_data": {
+      "captured_email": null,
+      "captured_mobile": "+1-555-0505",
+      "captured_school": null,
+      "captured_weekday": null,
+      "captured_time": null
+    }
+  }
+
+  Note the review_id from the response.
+
+  # Step 2: Check the pending review queue
+  curl -s http://localhost:8000/api/v1/review/pending | python3 -m json.tool
+  # → Array of review items with session_id, reason, context_snapshot
+
+  # Step 3: Resolve the review — operator fills in the missing fields
+  # Replace REVIEW_ID with the value from the Step 1 response
+  curl -s -X POST http://localhost:8000/api/v1/review/REVIEW_ID/resolve \
+    -H "Content-Type: application/json" \
+    -d '{
+      "decision": "edit",
+      "edited_data": {
+        "captured_email": "jennifer.patel@example.com",
+        "captured_school": "Maplewood Academy",
+        "captured_weekday": "Wednesday",
+        "captured_time": "4:00 PM"
+      }
+    }' | python3 -m json.tool
+
+  Expected after resolve:
+  {
+    "status": "resumed",
+    "outreach_status": "completed",
+    "confidence_score": 1.0
+  }
+  # The graph resumes from where it paused and writes the corrected data to Sheets.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  TELEGRAM STUDENT MESSAGES (4 use cases, rule-based)
+────────────────────────────────────────────────────────────────────────────────
+
+All message content comes from the student's fixture record — no free-text
+generation, no hallucination possible.
+
+────────────────────────────────────────────────
+  homework_followup
+────────────────────────────────────────────────
+
+  Student: Emma Johnson (ST001, overdue homework in Math Foundations)
+
+  curl -s -X POST http://localhost:8000/api/v1/telegram/send \
+    -H "Content-Type: application/json" \
+    -d '{"student_id": "ST001", "use_case": "homework_followup"}' \
+    | python3 -m json.tool
+
+  Expected:
+  {
+    "delivery_status": "sent",
+    "message_sent": "Hi Emma, just a quick reminder that your Math Foundations
+      homework is overdue. The task is: Chapter 5 worksheet (due 2026-03-28).
+      Please submit as soon as possible. We're here to help if you need it!",
+    "requires_human_review": false
+  }
+
+────────────────────────────────────────────────
+  missed_class
+────────────────────────────────────────────────
+
+  Student: James Williams (ST002, attendance_streak=0, missed 2 sessions)
+
+  curl -s -X POST http://localhost:8000/api/v1/telegram/send \
+    -H "Content-Type: application/json" \
+    -d '{"student_id": "ST002", "use_case": "missed_class"}' \
+    | python3 -m json.tool
+
+  Expected:
+  {
+    "delivery_status": "sent",
+    "message_sent": "Hi James, we noticed you missed your recent English Literature
+      session. We hope everything is okay! Please reach out if you need to
+      reschedule or if there's anything we can do to help."
+  }
+
+────────────────────────────────────────────────
+  upcoming_reminder
+────────────────────────────────────────────────
+
+  Student: Sofia Garcia (ST004, upcoming task: Book report due 2026-03-29)
+
+  curl -s -X POST http://localhost:8000/api/v1/telegram/send \
+    -H "Content-Type: application/json" \
+    -d '{"student_id": "ST004", "use_case": "upcoming_reminder"}' \
+    | python3 -m json.tool
+
+  Expected:
+  {
+    "delivery_status": "sent",
+    "message_sent": "Hi Sofia, just a heads-up: your Reading Circle task
+      'Book report' is due on 2026-03-29. Good luck — you've got this!"
+  }
+
+────────────────────────────────────────────────
+  satisfaction_survey
+────────────────────────────────────────────────
+
+  Student: Noah Kim (ST009, attendance_streak=10)
+
+  curl -s -X POST http://localhost:8000/api/v1/telegram/send \
+    -H "Content-Type: application/json" \
+    -d '{"student_id": "ST009", "use_case": "satisfaction_survey"}' \
+    | python3 -m json.tool
+
+  Expected:
+  {
+    "delivery_status": "sent",
+    "message_sent": "Hi Noah, you've been doing great in History Explorers!
+      We'd love your feedback — it only takes 2 minutes. Your input helps us
+      improve for all our students. Thank you!"
+  }
+
+────────────────────────────────────────────────
+  Opted-out student (blocked)
+────────────────────────────────────────────────
+
+  Student: Zara Obi (ST010, opt_out=true)
+
+  curl -s -X POST http://localhost:8000/api/v1/telegram/send \
+    -H "Content-Type: application/json" \
+    -d '{"student_id": "ST010", "use_case": "homework_followup"}' \
+    | python3 -m json.tool
+
+  Expected:
+  {
+    "delivery_status": "skipped",
+    "escalation_reason": "Student ST010 is opted out"
+  }
+
+────────────────────────────────────────────────
+  Student without Telegram chat_id (triggers review)
+────────────────────────────────────────────────
+
+  Student: Isabella Mendez (ST008, telegram_chat_id=null)
+
+  curl -s -X POST http://localhost:8000/api/v1/telegram/send \
+    -H "Content-Type: application/json" \
+    -d '{"student_id": "ST008", "use_case": "upcoming_reminder"}' \
+    | python3 -m json.tool
+
+  Expected:
+  {
+    "delivery_status": "skipped",
+    "requires_human_review": true,
+    "escalation_reason": "No telegram_chat_id for student ST008"
+  }
+
+
+────────────────────────────────────────────────────────────────────────────────
+  AUDIT LOG
+────────────────────────────────────────────────────────────────────────────────
+
+  # View all audit events (in-memory, resets on server restart)
+  curl -s http://localhost:8000/api/v1/audit/logs | python3 -m json.tool
+
+  # Filter by session ID
+  curl -s "http://localhost:8000/api/v1/audit/logs?session_id=SESSION_ID" \
+    | python3 -m json.tool
+
+  Each entry includes: timestamp, session_id, agent_type, entity_id, action, status.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  SESSION INSPECTION
+────────────────────────────────────────────────────────────────────────────────
+
+  # Inspect a Telegram session's LangGraph state
+  curl -s http://localhost:8000/api/v1/telegram/session/SESSION_ID \
+    | python3 -m json.tool
+
+  # List available students
+  curl -s http://localhost:8000/api/v1/telegram/students | python3 -m json.tool
+
+
+────────────────────────────────────────────────────────────────────────────────
+  CONNECTING REAL GOOGLE SHEETS
+────────────────────────────────────────────────────────────────────────────────
+
+  1. Create a Google Service Account and download credentials.json
+  2. Share the target spreadsheet with the service account email (Editor role)
+  3. Edit your .env file:
+
+     GOOGLE_SHEETS_URL=https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit
+     GOOGLE_SHEETS_CREDENTIALS_JSON=./credentials.json
+
+  4. Restart the server. On first write the app auto-creates four tabs:
+       Parents | Students | AuditLog | HumanReview
+
+  No migrations. No schema files. The header row IS the schema.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  ADDING A NEW TELEGRAM USE CASE (3 lines of code)
+────────────────────────────────────────────────────────────────────────────────
+
+  Only one file needs to change: app/agents/telegram/templates.py
+
+  1. Add your template to the TEMPLATES dict:
+       "progress_update": "Hi {student_name}, great progress in {course_name}! "
+                          "Your streak is {attendance_streak} sessions. Keep it up!"
+
+  2. Add required variables to REQUIRED_VARS:
+       "progress_update": ["student_name", "course_name", "attendance_streak"]
+
+  3. That's it. No routing changes, no new nodes, no new endpoints.
+
+  curl -s -X POST http://localhost:8000/api/v1/telegram/send \
+    -H "Content-Type: application/json" \
+    -d '{"student_id": "ST006", "use_case": "progress_update"}' \
+    | python3 -m json.tool
+
+
+────────────────────────────────────────────────────────────────────────────────
+  RUNNING TESTS
+────────────────────────────────────────────────────────────────────────────────
+
+  export PATH="$HOME/.local/bin:$PATH"
+
+  # Run all tests with coverage
+  poetry run pytest --cov=app tests/ -q
+
+  # Run just unit tests
+  poetry run pytest tests/unit/ -q
+
+  # Run just integration tests
+  poetry run pytest tests/integration/ -q
+
+  # Run a specific test
+  poetry run pytest tests/integration/test_telegram_graph.py::test_homework_followup_sent -v
+
+================================================================================

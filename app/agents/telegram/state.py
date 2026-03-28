@@ -7,6 +7,28 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
 
+def build_telegram_initial_state(student_id: str, use_case: str, session_id: str) -> dict:
+    """Factory for the initial state dict used by both API endpoints and tests."""
+    return {
+        "session_id": session_id,
+        "student_id": student_id,
+        "use_case": use_case,
+        "student_record": None,
+        "template_key": None,
+        "rendered_message": None,
+        "template_variables": {},
+        "delivery_status": "pending",
+        "delivery_attempts": 0,
+        "requires_human_review": False,
+        "escalation_reason": None,
+        "human_review_id": None,
+        "is_complete": False,
+        "error_message": None,
+        "audit_trail": [],
+        "messages": [],
+    }
+
+
 class TelegramState(TypedDict):
     # ── Identity ──────────────────────────────────────────────────────────────
     session_id: str

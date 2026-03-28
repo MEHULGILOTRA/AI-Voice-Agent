@@ -56,7 +56,6 @@ def get_student(student_id: str) -> dict:
 @pytest.fixture
 def test_settings():
     return Settings(
-        openai_api_key="",
         google_sheets_url="",
         vapi_mock_mode=True,
         whatsapp_mock_mode=True,
@@ -199,7 +198,6 @@ def outreach_graph(
         vapi_service=mock_vapi,
         whatsapp_service=mock_whatsapp,
         audit_service=audit_service,
-        llm=None,
         opt_out_checker=opt_out_checker_empty,
         quiet_checker=quiet_checker_inactive,
         idempotency_checker=no_op_idempotency,

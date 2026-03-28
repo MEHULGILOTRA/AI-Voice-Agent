@@ -15,3 +15,12 @@ htmlcov/
 credentials.json
 *.log
 .DS_Store
+Task.pdf
+*.sqlite
+*.db
+node_modules/
+.idea/
+.vscode/
+*.swp
+*~
+poetry.lock.bak

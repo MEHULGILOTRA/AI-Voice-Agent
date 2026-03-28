@@ -1,27 +1,42 @@
 """
 Parent outreach endpoints.
 """
-import json
 import uuid
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request
 
 from app.agents.outreach.scenarios import get_all_scenarios, get_scenario
+from app.agents.outreach.state import build_outreach_initial_state
+from app.core.fixtures import load_parents_fixture
 from app.core.memory import session_thread_id, register_session
 from app.schemas.parent import OutreachRequest, OutreachResult
 
 router = APIRouter()
 
-_PARENTS_FILE = Path(__file__).parent.parent.parent.parent / "tests" / "test_data" / "parents.json"
 
-
-def _load_parents_fixture() -> List[Dict]:
-    if _PARENTS_FILE.exists():
-        with open(_PARENTS_FILE) as f:
-            return json.load(f)
-    return []
+def _invoke_with_interrupt_handling(
+    graph, initial_state: dict, config: dict, session_id: str, request: Request
+) -> dict:
+    """Invoke the outreach graph, handling LangGraph interrupt() pauses gracefully."""
+    try:
+        return graph.invoke(initial_state, config=config)
+    except Exception as e:
+        review_queue = getattr(request.app.state, "review_queue", None)
+        if review_queue:
+            for item in review_queue.get_pending():
+                if item.session_id == session_id:
+                    return {
+                        "session_id": session_id,
+                        "status": "paused_for_review",
+                        "review_id": item.review_id,
+                        "reason": item.reason,
+                        "outreach_status": "human_review",
+                        "requires_human_review": True,
+                        "human_review_id": item.review_id,
+                        "message": "Graph paused. POST /api/v1/review/{review_id}/resolve to continue.",
+                    }
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/scenarios")
@@ -45,49 +60,10 @@ def run_scenario(scenario_id: str, request: Request) -> Dict[str, Any]:
     thread_id = session_thread_id("outreach", session_id)
     register_session(thread_id)
 
-    initial_state = {
-        "session_id": session_id,
-        "parent_id": scenario["parent_id"],
-        "scenario_id": scenario_id,
-        "messages": [],
-        "captured_email": None,
-        "captured_mobile": None,
-        "captured_school_name": None,
-        "captured_preferred_weekday": None,
-        "captured_preferred_time": None,
-        "captured_notes": None,
-        "outreach_status": None,
-        "confidence_score": 0.0,
-        "requires_human_review": False,
-        "human_review_reason": None,
-        "human_review_id": None,
-        "call_answered": False,
-        "whatsapp_sent": False,
-        "sheets_written": False,
-        "is_complete": False,
-        "error_message": None,
-        "audit_trail": [],
-    }
-
+    initial_state = build_outreach_initial_state(scenario["parent_id"], scenario_id, session_id)
     config = {"configurable": {"thread_id": thread_id}}
 
-    try:
-        result = graph.invoke(initial_state, config=config)
-    except Exception as e:
-        # Graph may have raised interrupt — check if review item was created
-        review_queue = getattr(request.app.state, "review_queue", None)
-        if review_queue:
-            pending = review_queue.get_pending()
-            for item in pending:
-                if item.session_id == session_id:
-                    return {
-                        "session_id": session_id,
-                        "status": "paused_for_review",
-                        "review_id": item.review_id,
-                        "reason": item.reason,
-                        "message": "Graph paused. POST /api/v1/review/{review_id}/resolve to continue.",
-                    }
-        raise HTTPException(status_code=500, detail=str(e))
+    result = _invoke_with_interrupt_handling(graph, initial_state, config, session_id, request)
 
     return {
         "session_id": session_id,
@@ -119,37 +95,11 @@ def start_outreach(body: OutreachRequest, request: Request) -> Dict[str, Any]:
     thread_id = session_thread_id("outreach", session_id)
     register_session(thread_id)
 
-    initial_state = {
-        "session_id": session_id,
-        "parent_id": body.parent_id,
-        "scenario_id": body.scenario_id or "",
-        "messages": [],
-        "captured_email": None,
-        "captured_mobile": None,
-        "captured_school_name": None,
-        "captured_preferred_weekday": None,
-        "captured_preferred_time": None,
-        "captured_notes": None,
-        "outreach_status": None,
-        "confidence_score": 0.0,
-        "requires_human_review": False,
-        "human_review_reason": None,
-        "human_review_id": None,
-        "call_answered": False,
-        "whatsapp_sent": False,
-        "sheets_written": False,
-        "is_complete": False,
-        "error_message": None,
-        "audit_trail": [],
-    }
-
+    initial_state = build_outreach_initial_state(body.parent_id, body.scenario_id or "", session_id)
     config = {"configurable": {"thread_id": thread_id}}
 
-    try:
-        result = graph.invoke(initial_state, config=config)
-        return {"session_id": session_id, **result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    result = _invoke_with_interrupt_handling(graph, initial_state, config, session_id, request)
+    return {"session_id": session_id, **result}
 
 
 @router.get("/session/{session_id}")
@@ -173,4 +123,4 @@ def list_parents(request: Request) -> Dict[str, Any]:
         parents = sheets.get_all_parents()
         return {"parents": [p.model_dump() for p in parents], "source": "sheets"}
     # Fallback to fixture
-    return {"parents": _load_parents_fixture(), "source": "fixture"}
+    return {"parents": load_parents_fixture(), "source": "fixture"}

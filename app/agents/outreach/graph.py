@@ -11,9 +11,7 @@ Human-in-the-loop:
     Resume with:
         graph.invoke(Command(resume=corrected_data), config=config)
 """
-import json
 import logging
-from pathlib import Path
 from typing import Any, Dict
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -22,21 +20,9 @@ from langgraph.graph import END, START, StateGraph
 from app.agents.outreach import nodes
 from app.agents.outreach.state import OutreachState
 from app.agents.shared.utils import get_idempotency_checker
+from app.core.fixtures import get_parent_from_fixture
 
 logger = logging.getLogger(__name__)
-
-_PARENTS_FILE = Path(__file__).parent.parent.parent.parent / "tests" / "test_data" / "parents.json"
-
-
-def _load_parent_record(parent_id: str) -> Dict[str, Any]:
-    """Load a parent record from test data (used when Sheets is not configured)."""
-    if _PARENTS_FILE.exists():
-        with open(_PARENTS_FILE) as f:
-            parents = json.load(f)
-        for p in parents:
-            if p["parent_id"] == parent_id:
-                return p
-    return {"parent_id": parent_id, "name": "Unknown", "mobile": ""}
 
 
 def build_outreach_graph(
@@ -45,7 +31,6 @@ def build_outreach_graph(
     vapi_service=None,
     whatsapp_service=None,
     audit_service=None,
-    llm=None,
     opt_out_checker=None,
     quiet_checker=None,
     idempotency_checker=None,
@@ -53,7 +38,7 @@ def build_outreach_graph(
 ):
     """
     Returns a compiled outreach graph with all dependencies injected.
-    All services are resolved at build time (not per-invocation) for efficiency.
+    Zero LLM calls — fully rule-based.
     """
     from app.config import get_settings
     from app.core.opt_out import get_parent_opt_out_checker
@@ -61,7 +46,6 @@ def build_outreach_graph(
     from app.services.audit import AuditService
     from app.services.vapi import VapiService
     from app.services.whatsapp import WhatsAppService
-    from app.agents.shared.llm import get_llm
 
     _settings = settings or get_settings()
     _opt_out = opt_out_checker or get_parent_opt_out_checker()
@@ -74,13 +58,12 @@ def build_outreach_graph(
     # Resolve services once at build time
     _vapi = vapi_service or VapiService(_settings)
     _wa = whatsapp_service or WhatsAppService(_settings)
-    _llm = llm or (get_llm(_settings) if _settings.openai_api_key else None)
 
     def _get_parent_dict(parent_id: str) -> Dict[str, Any]:
         if sheets_service:
             record = sheets_service.get_parent_by_id(parent_id)
             return record.model_dump() if record else {}
-        return _load_parent_record(parent_id)
+        return get_parent_from_fixture(parent_id) or {"parent_id": parent_id, "name": "Unknown", "mobile": ""}
 
     # ── Node closures ─────────────────────────────────────────────────────────
     def _validate(state):
@@ -90,7 +73,7 @@ def build_outreach_graph(
         return nodes.initiate_call(state, _vapi, _get_parent_dict(state["parent_id"]))
 
     def _conduct(state):
-        return nodes.conduct_conversation(state, _llm)
+        return nodes.conduct_conversation(state)
 
     def _extract(state):
         return nodes.extract_data(state)

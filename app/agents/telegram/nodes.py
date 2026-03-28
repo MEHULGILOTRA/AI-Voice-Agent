@@ -16,6 +16,7 @@ from app.agents.shared.utils import append_trail
 from app.agents.telegram import templates as tmpl
 from app.agents.telegram.state import TelegramState
 from app.schemas.review import ReviewPriority
+from app.schemas.student import DeliveryStatus
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ def check_preconditions(state: TelegramState, opt_out_checker, quiet_checker, id
     # 1. Opt-out
     if opt_out_checker.is_opted_out(student_id) or record.get("opt_out"):
         return {
-            "delivery_status": "skipped",
+            "delivery_status": DeliveryStatus.SKIPPED.value,
             "is_complete": True,
             "audit_trail": append_trail(state, "check_preconditions: BLOCKED — opted out"),
         }
@@ -77,7 +78,7 @@ def check_preconditions(state: TelegramState, opt_out_checker, quiet_checker, id
     # 2. Quiet hours
     if quiet_checker.is_quiet_time():
         return {
-            "delivery_status": "skipped",
+            "delivery_status": DeliveryStatus.SKIPPED.value,
             "is_complete": True,
             "audit_trail": append_trail(state, "check_preconditions: BLOCKED — quiet hours"),
         }
@@ -87,7 +88,7 @@ def check_preconditions(state: TelegramState, opt_out_checker, quiet_checker, id
     use_case = state.get("use_case", "")
     if idempotency_checker.is_duplicate(student_id, use_case, tab):
         return {
-            "delivery_status": "skipped",
+            "delivery_status": DeliveryStatus.SKIPPED.value,
             "is_complete": True,
             "audit_trail": append_trail(state, "check_preconditions: BLOCKED — already sent today"),
         }
@@ -95,7 +96,7 @@ def check_preconditions(state: TelegramState, opt_out_checker, quiet_checker, id
     # 4. Missing chat_id
     if not record.get("telegram_chat_id"):
         return {
-            "delivery_status": "skipped",
+            "delivery_status": DeliveryStatus.SKIPPED.value,
             "requires_human_review": True,
             "escalation_reason": "telegram_chat_id missing",
             "is_complete": True,
@@ -168,7 +169,7 @@ def render_message(state: TelegramState) -> Dict:
         rendered = tmpl.render(template_key, variables)
     except KeyError as e:
         return {
-            "delivery_status": "failed",
+            "delivery_status": DeliveryStatus.FAILED.value,
             "requires_human_review": True,
             "escalation_reason": f"Template render error: {e}",
             "is_complete": True,
@@ -212,14 +213,14 @@ def send_telegram(state: TelegramState, telegram_client) -> Dict:
     try:
         result = telegram_client.send_message(chat_id, message)
         return {
-            "delivery_status": "sent",
+            "delivery_status": DeliveryStatus.SENT.value,
             "delivery_attempts": state.get("delivery_attempts", 0) + 1,
             "audit_trail": append_trail(state, f"send_telegram: sent to chat_id={chat_id}"),
         }
     except Exception as e:
         logger.error("Telegram send failed for %s: %s", state["student_id"], e)
         return {
-            "delivery_status": "failed",
+            "delivery_status": DeliveryStatus.FAILED.value,
             "delivery_attempts": state.get("delivery_attempts", 0) + 1,
             "audit_trail": append_trail(state, f"send_telegram: FAILED — {e}"),
         }
@@ -253,7 +254,7 @@ def finalize_audit(state: TelegramState, audit_service) -> Dict:
         entity_id=state["student_id"],
         action="session_complete",
         details=" | ".join(state.get("audit_trail", [])),
-        status="success" if state.get("delivery_status") == "sent" else "skipped_or_failed",
+        status="success" if state.get("delivery_status") == DeliveryStatus.SENT.value else "skipped_or_failed",
     )
     return {
         "is_complete": True,
@@ -271,7 +272,7 @@ def route_after_load(state: TelegramState) -> str:
 
 
 def route_after_preconditions(state: TelegramState) -> str:
-    if state.get("is_complete") or state.get("delivery_status") in ("skipped", "failed"):
+    if state.get("is_complete") or state.get("delivery_status") in (DeliveryStatus.SKIPPED.value, DeliveryStatus.FAILED.value):
         return "finalize_audit"
     return "select_template"
 
@@ -283,7 +284,7 @@ def route_after_template_select(state: TelegramState) -> str:
 
 
 def route_after_render(state: TelegramState) -> str:
-    if state.get("is_complete") or state.get("delivery_status") == "failed":
+    if state.get("is_complete") or state.get("delivery_status") == DeliveryStatus.FAILED.value:
         return "finalize_audit"
     return "validate_output"
 

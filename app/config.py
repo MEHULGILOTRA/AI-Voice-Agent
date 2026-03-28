@@ -1,12 +1,9 @@
 from functools import lru_cache
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # LLM
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
-
     # Google Sheets
     google_sheets_credentials_json: str = "./credentials.json"
     google_sheets_url: str = ""
@@ -39,6 +36,20 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = 3600
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @field_validator("confidence_threshold")
+    @classmethod
+    def _check_threshold(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError("confidence_threshold must be between 0.0 and 1.0")
+        return v
+
+    @field_validator("quiet_hours_start", "quiet_hours_end")
+    @classmethod
+    def _check_hours(cls, v: int) -> int:
+        if not 0 <= v <= 23:
+            raise ValueError("quiet hours must be between 0 and 23")
+        return v
 
 
 @lru_cache()

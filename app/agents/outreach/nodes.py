@@ -1,11 +1,11 @@
 """
-Outreach graph nodes.
+Outreach graph nodes — 100% rule-based, zero LLM calls.
 
 Node responsibilities:
-  validate_request     — opt-out / quiet hours / idempotency (rule-based, no LLM)
+  validate_request     — opt-out / quiet hours / idempotency
   initiate_call        — Vapi call (mock or real)
-  conduct_conversation — THE ONLY LLM NODE: simulates/processes call transcript
-  extract_data         — parse transcript with regex (no LLM)
+  conduct_conversation — pass-through: transcript from fixture/Vapi
+  extract_data         — parse transcript with regex
   score_confidence     — field-weight scoring; interrupt() if score < threshold
   write_to_sheets      — upsert parent record
   send_whatsapp        — send missed-call WhatsApp template
@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage
 from langgraph.types import interrupt
 
 from app.agents.outreach.state import OutreachState
@@ -107,7 +107,7 @@ def initiate_call(state: OutreachState, vapi_service, parent_record: Dict) -> Di
     return {
         "call_answered": result.get("call_answered", False),
         "messages": messages,
-        "audit_trail": _trail(
+        "audit_trail": append_trail(
             state,
             f"initiate_call: answered={result.get('call_answered')}, "
             f"duration={result.get('duration_seconds')}s"
@@ -115,39 +115,24 @@ def initiate_call(state: OutreachState, vapi_service, parent_record: Dict) -> Di
     }
 
 
-def conduct_conversation(state: OutreachState, llm) -> Dict:
+def conduct_conversation(state: OutreachState) -> Dict:
     """
-    THE ONLY LLM NODE in the outreach graph.
+    Pass-through node: transcript is already in state["messages"] from
+    initiate_call (fixture in mock mode, Vapi webhook in production).
 
-    For demo: the transcript is already in state["messages"] from initiate_call
-    (loaded from fixture). In production this node would receive live Vapi
-    webhook events. The LLM is invoked to produce a structured extraction
-    prompt — if a real transcript isn't available yet.
-
-    If the transcript is already present (mock mode), skip the LLM call.
+    Zero LLM calls. If no transcript is present, the graph continues with
+    partial data — human review catches incomplete extractions downstream.
     """
     transcript = extract_transcript(state.get("messages", []))
 
     if transcript and "CALL_UNANSWERED" not in transcript:
-        # Transcript already loaded — no LLM call needed
-        logger.info("conduct_conversation: transcript present, skipping LLM call")
+        logger.info("conduct_conversation: transcript present")
         return {
-            "audit_trail": append_trail(state, "conduct_conversation: transcript used from fixture/Vapi"),
-        }
-
-    # LLM fallback — only if no transcript available
-    if llm is not None:
-        from app.agents.shared.prompts import OUTREACH_EXTRACTION_PROMPT
-        parent_name = state.get("parent_id", "the parent")
-        prompt = OUTREACH_EXTRACTION_PROMPT.format(parent_name=parent_name)
-        response = llm.invoke([HumanMessage(content=prompt)])
-        return {
-            "messages": [AIMessage(content=response.content)],
-            "audit_trail": append_trail(state, "conduct_conversation: LLM called for transcript"),
+            "audit_trail": append_trail(state, "conduct_conversation: transcript from fixture/Vapi"),
         }
 
     return {
-        "audit_trail": append_trail(state, "conduct_conversation: no transcript, no LLM — partial"),
+        "audit_trail": append_trail(state, "conduct_conversation: no transcript — partial"),
     }
 
 
@@ -252,7 +237,7 @@ def score_confidence(state: OutreachState, settings) -> Dict:
         updates["human_review_id"] = review_id
         updates["human_review_reason"] = f"Confidence {score:.2f} below threshold {threshold}"
         updates["outreach_status"] = OutreachStatus.HUMAN_REVIEW.value
-        updates["audit_trail"] = _trail(
+        updates["audit_trail"] = append_trail(
             state,
             f"score_confidence: INTERRUPT — review_id={review_id}, score={score}"
         )

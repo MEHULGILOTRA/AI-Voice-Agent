@@ -141,43 +141,65 @@ class SheetsService:
                 result.add(padded[id_col])
         return result
 
-    # ── Parents ───────────────────────────────────────────────────────────────
+    # ── Generic CRUD helpers ────────────────────────────────────────────────
 
-    def get_parent_by_id(self, parent_id: str) -> Optional[ParentRecord]:
-        ws = self._get_worksheet(self._settings.google_sheets_parent_tab, PARENT_HEADERS)
-        row_index = self._find_row_index(ws, 1, parent_id)
+    def _get_record_by_id(self, tab: str, headers: List[str], id_value: str, parse_fn):
+        """Fetch a single record by its first-column ID, then apply parse_fn to the row dict."""
+        ws = self._get_worksheet(tab, headers)
+        row_index = self._find_row_index(ws, 1, id_value)
         if row_index is None:
             return None
         row = ws.row_values(row_index)
-        d = self._row_to_dict(PARENT_HEADERS, row)
-        d["confidence_score"] = float(d.get("confidence_score") or 0)
-        d["opt_out"] = self._parse_bool(d.get("opt_out", ""))
-        return ParentRecord(**d)
+        d = self._row_to_dict(headers, row)
+        return parse_fn(d)
 
-    def get_all_parents(self) -> List[ParentRecord]:
-        ws = self._get_worksheet(self._settings.google_sheets_parent_tab, PARENT_HEADERS)
+    def _get_all_records(self, tab: str, headers: List[str], id_field: str, parse_fn):
+        """Fetch all records from a tab, skipping rows with empty ID, applying parse_fn."""
+        ws = self._get_worksheet(tab, headers)
         rows = ws.get_all_values()
         if len(rows) <= 1:
             return []
-        headers = rows[0]
+        row_headers = rows[0]
         records = []
         for row in rows[1:]:
-            d = self._row_to_dict(headers, row)
-            if not d.get("parent_id"):
+            d = self._row_to_dict(row_headers, row)
+            if not d.get(id_field):
                 continue
-            d["confidence_score"] = float(d.get("confidence_score") or 0)
-            d["opt_out"] = self._parse_bool(d.get("opt_out", ""))
-            records.append(ParentRecord(**d))
+            records.append(parse_fn(d))
         return records
 
-    def upsert_parent(self, record: ParentRecord) -> None:
-        ws = self._get_worksheet(self._settings.google_sheets_parent_tab, PARENT_HEADERS)
-        row = [str(getattr(record, h, "") or "") for h in PARENT_HEADERS]
-        row_index = self._find_row_index(ws, 1, record.parent_id)
+    def _upsert_record(self, tab: str, headers: List[str], record, id_value: str) -> None:
+        """Insert or update a record. First column is used as the ID for lookup."""
+        ws = self._get_worksheet(tab, headers)
+        row = [str(getattr(record, h, "") or "") for h in headers]
+        row_index = self._find_row_index(ws, 1, id_value)
         if row_index:
             ws.update(f"A{row_index}", [row])
         else:
             ws.append_row(row)
+
+    # ── Parents ───────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _parse_parent(d: Dict) -> ParentRecord:
+        d["confidence_score"] = float(d.get("confidence_score") or 0)
+        d["opt_out"] = SheetsService._parse_bool(d.get("opt_out", ""))
+        return ParentRecord(**d)
+
+    def get_parent_by_id(self, parent_id: str) -> Optional[ParentRecord]:
+        return self._get_record_by_id(
+            self._settings.google_sheets_parent_tab, PARENT_HEADERS, parent_id, self._parse_parent
+        )
+
+    def get_all_parents(self) -> List[ParentRecord]:
+        return self._get_all_records(
+            self._settings.google_sheets_parent_tab, PARENT_HEADERS, "parent_id", self._parse_parent
+        )
+
+    def upsert_parent(self, record: ParentRecord) -> None:
+        self._upsert_record(
+            self._settings.google_sheets_parent_tab, PARENT_HEADERS, record, record.parent_id
+        )
 
     def get_opt_out_parent_ids(self) -> Set[str]:
         ws = self._get_worksheet(self._settings.google_sheets_parent_tab, PARENT_HEADERS)
@@ -186,41 +208,26 @@ class SheetsService:
 
     # ── Students ──────────────────────────────────────────────────────────────
 
-    def get_student_by_id(self, student_id: str) -> Optional[StudentRecord]:
-        ws = self._get_worksheet(self._settings.google_sheets_student_tab, STUDENT_HEADERS)
-        row_index = self._find_row_index(ws, 1, student_id)
-        if row_index is None:
-            return None
-        row = ws.row_values(row_index)
-        d = self._row_to_dict(STUDENT_HEADERS, row)
+    @staticmethod
+    def _parse_student(d: Dict) -> StudentRecord:
         d["attendance_streak"] = int(d.get("attendance_streak") or 0)
-        d["opt_out"] = self._parse_bool(d.get("opt_out", ""))
+        d["opt_out"] = SheetsService._parse_bool(d.get("opt_out", ""))
         return StudentRecord(**d)
 
+    def get_student_by_id(self, student_id: str) -> Optional[StudentRecord]:
+        return self._get_record_by_id(
+            self._settings.google_sheets_student_tab, STUDENT_HEADERS, student_id, self._parse_student
+        )
+
     def get_all_students(self) -> List[StudentRecord]:
-        ws = self._get_worksheet(self._settings.google_sheets_student_tab, STUDENT_HEADERS)
-        rows = ws.get_all_values()
-        if len(rows) <= 1:
-            return []
-        headers = rows[0]
-        records = []
-        for row in rows[1:]:
-            d = self._row_to_dict(headers, row)
-            if not d.get("student_id"):
-                continue
-            d["attendance_streak"] = int(d.get("attendance_streak") or 0)
-            d["opt_out"] = self._parse_bool(d.get("opt_out", ""))
-            records.append(StudentRecord(**d))
-        return records
+        return self._get_all_records(
+            self._settings.google_sheets_student_tab, STUDENT_HEADERS, "student_id", self._parse_student
+        )
 
     def upsert_student(self, record: StudentRecord) -> None:
-        ws = self._get_worksheet(self._settings.google_sheets_student_tab, STUDENT_HEADERS)
-        row = [str(getattr(record, h, "") or "") for h in STUDENT_HEADERS]
-        row_index = self._find_row_index(ws, 1, record.student_id)
-        if row_index:
-            ws.update(f"A{row_index}", [row])
-        else:
-            ws.append_row(row)
+        self._upsert_record(
+            self._settings.google_sheets_student_tab, STUDENT_HEADERS, record, record.student_id
+        )
 
     def get_opt_out_student_ids(self) -> Set[str]:
         ws = self._get_worksheet(self._settings.google_sheets_student_tab, STUDENT_HEADERS)
@@ -280,7 +287,10 @@ class SheetsService:
         ws = self._get_worksheet(self._settings.google_sheets_review_tab, REVIEW_HEADERS)
         row_index = self._find_row_index(ws, 1, review_id)
         if row_index:
-            ws.update(f"I{row_index}:K{row_index}", [["True", resolution, resolved_at]])
+            resolved_idx = REVIEW_HEADERS.index("resolved")
+            start_col = chr(ord('A') + resolved_idx)
+            end_col = chr(ord('A') + resolved_idx + 2)
+            ws.update(f"{start_col}{row_index}:{end_col}{row_index}", [["True", resolution, resolved_at]])
 
     def get_pending_reviews(self) -> List[Dict]:
         ws = self._get_worksheet(self._settings.google_sheets_review_tab, REVIEW_HEADERS)

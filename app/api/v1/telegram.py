@@ -1,26 +1,17 @@
 """
 Telegram student messaging endpoints.
 """
-import json
 import uuid
-from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.agents.telegram.state import build_telegram_initial_state
+from app.core.fixtures import load_students_fixture
 from app.core.memory import session_thread_id, register_session
 from app.schemas.student import TelegramMessageRequest
 
 router = APIRouter()
-
-_STUDENTS_FILE = Path(__file__).parent.parent.parent.parent / "tests" / "test_data" / "students.json"
-
-
-def _load_students_fixture() -> List[Dict]:
-    if _STUDENTS_FILE.exists():
-        with open(_STUDENTS_FILE) as f:
-            return json.load(f)
-    return []
 
 
 @router.post("/send")
@@ -34,25 +25,7 @@ def send_message(body: TelegramMessageRequest, request: Request) -> Dict[str, An
     thread_id = session_thread_id("telegram", session_id)
     register_session(thread_id)
 
-    initial_state = {
-        "session_id": session_id,
-        "student_id": body.student_id,
-        "use_case": body.use_case.value,
-        "student_record": None,
-        "template_key": None,
-        "rendered_message": None,
-        "template_variables": {},
-        "delivery_status": "pending",
-        "delivery_attempts": 0,
-        "requires_human_review": False,
-        "escalation_reason": None,
-        "human_review_id": None,
-        "is_complete": False,
-        "error_message": None,
-        "audit_trail": [],
-        "messages": [],
-    }
-
+    initial_state = build_telegram_initial_state(body.student_id, body.use_case.value, session_id)
     config = {"configurable": {"thread_id": thread_id}}
 
     try:
@@ -92,4 +65,4 @@ def list_students(request: Request) -> Dict[str, Any]:
     if sheets and sheets.is_available():
         students = sheets.get_all_students()
         return {"students": [s.model_dump() for s in students], "source": "sheets"}
-    return {"students": _load_students_fixture(), "source": "fixture"}
+    return {"students": load_students_fixture(), "source": "fixture"}

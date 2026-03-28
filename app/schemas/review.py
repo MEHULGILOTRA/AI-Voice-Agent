@@ -24,8 +24,14 @@ class HumanReviewItem(BaseModel):
     resolved_at: Optional[datetime] = None
 
 
+class ReviewDecisionType(str, Enum):
+    APPROVE = "approve"
+    REJECT = "reject"
+    EDIT = "edit"
+
+
 class ReviewDecision(BaseModel):
     review_id: str
-    decision: str             # "approve" | "reject" | "edit"
+    decision: ReviewDecisionType
     edited_data: Optional[Dict[str, Any]] = None
     reviewer_notes: Optional[str] = None

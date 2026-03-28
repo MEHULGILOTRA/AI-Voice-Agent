@@ -52,8 +52,7 @@ and the reasoning behind every major design choice.
          │  └───────────────────────────────┘ │
          └───────────────────────────────────┘
 
-  * = The ONLY LLM call in the entire system (outreach converse node).
-      Telegram agent has zero LLM calls.
+  Zero LLM calls anywhere. Both agents are 100% rule-based.
 
 ────────────────────────────────────────────────────────────────────────────────
   LAYER BREAKDOWN
@@ -90,12 +89,8 @@ and the reasoning behind every major design choice.
     initiate_call           Call VapiService.initiate_call().
                             → If no answer: jump to send_whatsapp branch.
          │
-    conduct_conversation    *** ONLY LLM NODE ***
-                            If transcript already in state (mock / fixture):
-                              skips the LLM call entirely.
-                            If no transcript: calls ChatOpenAI once to simulate
-                              the parent call. In production this is replaced
-                              by a real Vapi webhook handler.
+    conduct_conversation    Pass-through: transcript from fixture (mock) or
+                            Vapi webhook (production). Zero LLM calls.
          │
     extract_data            Parse transcript with compiled regex.
                             Extracts: email, mobile, school, weekday, time.
@@ -253,27 +248,18 @@ and the reasoning behind every major design choice.
 
 
 ────────────────────────────────────────────────────────────────────────────────
-  LLM USAGE SUMMARY
+  LLM USAGE
 ────────────────────────────────────────────────────────────────────────────────
 
-  Used:
-    - outreach/nodes.py → conduct_conversation: ONE call per session max.
-      In demo/mock mode (VAPI_MOCK_MODE=true), the transcript is loaded from
-      a fixture file and the LLM is NOT called at all.
-      In production, a real Vapi call replaces this node.
+  Zero. The entire system is 100% rule-based:
+    - Data extraction from transcript → compiled regex
+    - Confidence scoring → field-weight sum
+    - Template selection → dict lookup
+    - Message rendering → string interpolation
+    - All routing, validation, precondition checks → pure Python
+    - Quiet hours, opt-out, idempotency → pure Python
 
-  Not used (rule-based instead):
-    - Data extraction from transcript (regex)
-    - Confidence scoring (field-weight sum)
-    - Template selection (enum lookup)
-    - Message rendering (string interpolation)
-    - All routing, validation, and precondition checks
-    - Quiet hours, opt-out, idempotency
-
-  Cost impact:
-    Demo run (all 5 scenarios): 0 LLM calls (all mocked).
-    Production run (real Vapi): 1 LLM call per outreach where no live
-    transcript is available. Telegram: always 0 calls.
+  No OpenAI dependency. No API keys required. No per-call costs.
 
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -297,8 +283,7 @@ and the reasoning behind every major design choice.
     → Set GOOGLE_SHEETS_URL=... + GOOGLE_SHEETS_CREDENTIALS_JSON=...
     → App creates all 4 tabs automatically on first write
 
-  To swap the LLM:
-    → Set OPENAI_MODEL=gpt-4o in .env
+  No LLM to configure — the system is fully rule-based.
 
 
 ================================================================================

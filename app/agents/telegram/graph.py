@@ -3,9 +3,7 @@ Telegram student messaging LangGraph graph.
 
 Zero LLM calls unless a student replies to a survey (optional sentiment classifier).
 """
-import json
 import logging
-from pathlib import Path
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -13,19 +11,9 @@ from langgraph.graph import END, START, StateGraph
 from app.agents.telegram import nodes
 from app.agents.telegram.state import TelegramState
 from app.agents.shared.utils import get_idempotency_checker
+from app.core.fixtures import load_students_fixture
 
 logger = logging.getLogger(__name__)
-
-_STUDENTS_FILE = (
-    Path(__file__).parent.parent.parent.parent / "tests" / "test_data" / "students.json"
-)
-
-
-def _load_students_fixture():
-    if _STUDENTS_FILE.exists():
-        with open(_STUDENTS_FILE) as f:
-            return json.load(f)
-    return []
 
 
 def build_telegram_graph(
@@ -50,7 +38,7 @@ def build_telegram_graph(
         _settings.quiet_hours_start, _settings.quiet_hours_end
     )
     _audit = audit_service or AuditService(sheets_service)
-    _students_fixture = _load_students_fixture()
+    _students_fixture = load_students_fixture()
     _idempotency = get_idempotency_checker(sheets_service, idempotency_checker)
 
     # Resolve services once at build time
